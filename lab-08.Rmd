@@ -17,7 +17,7 @@ weather <- read.csv("data/weatherAUS.csv", header = TRUE)
 
 # Exercise 1: Exploratory Data Analysis
 
-We will start by transform any character variables that need to be transformed into categorical. Use the following code to identify them and trasform them into factors.
+We will start by transform any character variables that need to be transformed into categorical. Use the following code to identify them and transform them into factors.
 
 ```{r mutate-char}
 variables_to_transform = weather %>% 
@@ -46,13 +46,18 @@ weather %>%
 1. Are there any missing values in our variable of interest `RainTomorrow`? If so, we filter them out and save the new dataset as `weather_noNA`. 
 
 ```{r}
-
+#Yes - 0.0225 proportion of NAs
+weather_noNA <- weather %>%
+  filter(!is.na(RainTomorrow))
 ```
 
 2. Which cities are the ones with more rain days? To do this, let's analyze the `RainToday` variable. 
 
 ```{r}
-
+weather_noNA %>%
+  filter(RainToday == "Yes") %>%
+  count(Location) %>%
+  arrange(desc(n))
 ```
 
 # Exercise 2: Logistic regression
@@ -60,7 +65,7 @@ weather %>%
 We will focus our analysis on the city of `Portland`.
 Remove `eval=FALSE` from below once you have defined the object `weather_noNA`.
 
-```{r eval=FALSE}
+```{r}
 # remove eval=FALSE
 weather_Portland <- weather_noNA %>%
   filter(Location == "Portland")
@@ -69,7 +74,11 @@ weather_Portland <- weather_noNA %>%
 1. Try to predict `RainTomorrow` by fitting a linear regression using the variable `RainToday` and print the output using `tidy()`.
 
 ```{r}
+rain_fit <- logistic_reg() %>%
+  set_engine("glm") %>%
+  fit(RainToday ~ RainTomorrow, data = weather_Portland, family = "binomial")
 
+tidy(rain_fit)
 ```
 
 2. For each point in our dataset, what are the fitted probabilities that tomorrow it's going to rain? 
@@ -77,20 +86,30 @@ weather_Portland <- weather_noNA %>%
 - Plot them using an appropriate visualization. What is peculiar about them?
 
 ```{r}
+rain_pred <- predict(rain_fit, weather_Portland, type = "prob") %>% bind_cols(weather_Portland %>% select(RainToday, Date))
 
+rain_pred %>%
+  roc_curve(
+    truth = RainToday,
+    .pred_Yes,
+    event_level = "second"
+  ) %>%
+  autoplot()
 ```
 
 > Hint: how many unique values do the predicted probabilities take? What do these value correspond to?
 
-*Add your answer here*
+*Only two unique values taken by predicted probabilities - this is shown in graph as only one point off curve.*
 
 - Are there any missing values? Why?
 
 ```{r}
+rain_pred %>%
+  count(is.na(RainToday))
 
 ```
 
-*Add your answer here*
+*Yes as these occurred in dataset and not removed*
 
 # Exercise 3: Split the data and build workflows
 
@@ -103,17 +122,19 @@ set.seed(111723)
 1. Split the data into a training set (80% of your Portland data) and a testing set.
 
 ```{r}
-
+portland_split <- initial_split(weather_Portland, prop=0.8)
+train_data <- training(portland_split)
+test_data <- testing(portland_split)
 ```
 
 2. Refit the simple logistic regression using `RainToday` as predictor on this training data, using `tidymodels` recipes and workflows.
 
 - Start by the recipe. First initialize the recipe, then remove observations with missing values using `step_naomit()` and finally use `step_dummy` to convert categorical to dummy variables.
 
-```{r recipe1, eval=FALSE}
+```{r recipe1}
 # remove eval=FALSE
 weather_rec1 <- recipe(
-  RainTomorrow ~ RainToday, 
+  RainTomorrow ~ RainToday,
   data = weather_Portland
   ) %>%
   step_naomit(all_predictors()) %>%
@@ -122,21 +143,21 @@ weather_rec1 <- recipe(
 
 - Build your workflow combining model and recipe
 
-```{r workflow1, eval = FALSE}
+```{r workflow1}
 # remove eval=FALSE
-weather_mod1 <- ___ %>% 
-  set_engine(___)
+weather_mod1 <- logistic_reg() %>% 
+  set_engine("glm")
 weather_wflow1 <- workflow() %>% # initiate workflow
-  ___(___) %>%                   # add model
-  ___(___)                       # add recipe
+  add_model(weather_mod1) %>%                   # add model
+  add_recipe(weather_rec1)                       # add recipe
 ```
 
 - Now fit your model on the training data
 
-```{r fit1, eval = FALSE}
+```{r fit1}
 # remove eval=FALSE
 weather_fit1 <- weather_wflow1 %>% 
-  fit(data = ___)
+  fit(data = train_data)
 tidy(weather_fit1)
 ```
 
@@ -145,40 +166,46 @@ tidy(weather_fit1)
 
 - Start by the recipe. This will be a simple recipe, because we have not done many pre-processing steps, but do remove missing values and transform categorical variables into dummy variables:
 
-```{r recipe2, eval=FALSE}
+```{r recipe2}
 # remove eval=FALSE
 weather_rec2 <- recipe(
-  RainTomorrow ~ ___+___+___+___, # include your formula
+  RainTomorrow ~ MinTemp+MaxTemp+RainToday+Rainfall, # include your formula
   data = weather_Portland
   ) %>%
-  step_naomit(___) %>%.          # exclude cases with missing values in all predictors
-  step_dummy(all_nominal(), ___) # exclude all outcomes
+  step_naomit(all_predictors()) %>%          # exclude cases with missing values in all predictors
+  step_dummy(all_nominal(), -all_outcomes()) # exclude all outcomes
 ```
 
 - Save the model, workflow and finally, let's fit to the training data.
 
 ```{r}
-
+weather_mod2 <- logistic_reg() %>%
+  set_engine("glm")
+weather_wflow2 <- workflow() %>%
+  add_model(weather_mod2) %>%
+  add_recipe(weather_rec2)
+weather_fit2 <- weather_wflow2 %>%
+  fit(data = train_data)
 ```
 
 3. Now let's evaluate the predictive performance of these two models on our test set.
 
 - Create the ROC curve and get the AUC (area under the curve) value for your first simple logistic regression model.
 
-```{r eval=FALSE}
+```{r}
 # remove eval=FALSE
-weather_pred2 <- predict(___, test_data, type = "prob") %>%
+weather_pred1 <- predict(weather_fit1, test_data, type = "prob") %>%
   bind_cols(test_data)
-weather_pred2 %>%
-  ___(                      # plot ROC curve
+weather_pred1 %>%
+  roc_curve(                      # plot ROC curve
     truth = RainTomorrow,
     .pred_Yes,
     event_level = "second"
   ) %>%
   autoplot()
 
-weather_pred2 %>%
-  ___(                  # get AUC value
+weather_pred1 %>%
+  roc_auc(                  # get AUC value
     truth = RainTomorrow,
     .pred_Yes,
     event_level = "second"
@@ -188,18 +215,33 @@ weather_pred2 %>%
 - Create now the ROC curve and get the AUC (area under the curve) value for your second model.
 
 ```{r}
+weather_pred2 <- predict(weather_fit2, test_data, type = "prob") %>%
+  bind_cols(test_data)
+weather_pred2 %>%
+  roc_curve(                      # plot ROC curve
+    truth = RainTomorrow,
+    .pred_Yes,
+    event_level = "second"
+  ) %>%
+  autoplot()
 
+weather_pred2 %>%
+  roc_auc(                  # get AUC value
+    truth = RainTomorrow,
+    .pred_Yes,
+    event_level = "second"
+  )
 ```
 
 - Which model seems to have a better performance?
 
-*Add your answer here*
+*The second model has higher auc value and curve is better shaped.*
 
 4. Now focus on the second model. Consider several thresholds for predicting `RainTomorrow` and look at the number of false positives and false negatives. For example:
 
 ```{r eval = FALSE}
 # remove eval = FALSE
-cutoff_prob <- 0.5
+cutoff_prob <- 0.3
 weather_pred2 %>%
   mutate(
     RainTomorrow      = if_else(RainTomorrow == "Yes", "It rains", "It does not rain"),
@@ -211,11 +253,11 @@ weather_pred2 %>%
 
 - What is the the false positive rate with `cutoff_prob = 0.3`? 
 
-*Add your answer here*
+*0.292 rate*
 
 - What about the false negative rate?
 
-*Add your answer here*
+*0.0874 rate*
 
 # Exercise 4: Extend our model [OPTIONAL]
 
